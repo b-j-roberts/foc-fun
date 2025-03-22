@@ -1,14 +1,15 @@
 import Image from "next/image";
 import { useState, useRef, useEffect } from "react";
-import { useAccount } from "@starknet-react/core";
-import { hash } from "starknet";
+import { useAccount, useProvider } from "@starknet-react/core";
 
 import { ContractInput } from "./ContractInput";
 import { declareContract } from "../../contract/calls";
-import { registerDeployMultiCall, registerClassCall, deployContractCall, registerEventsCall } from "../../contract/registry";
+import { feltString, registerClassCall, registerDeployMultiCall, registerContractAndEventsCall } from "../../contract/registry";
 
 import upload from "../../../public/icons/upload.png";
 import uploaded from "../../../public/icons/uploaded.png";
+import { extractConContract, tractHashes, hash, Contract, extractContractHashes, json } from "starknet";
+import { REGISTRY_CONTRACT_ADDRESS } from "../../../constants";
 // import edit from "../../../public/icons/edit.png";
 
 // TODO: no compiled_contract_class.json?
@@ -24,7 +25,7 @@ import uploaded from "../../../public/icons/uploaded.png";
 // TODO: Voyager links on class hash & contract address
 // TODO: Shorten class hash & contract address & add copy button
 export default function EngineDeploy(_props: any) {
-  const { account } = useAccount();
+  const { account }: any = useAccount();
   const contractClassRef = useRef<HTMLInputElement>(null);
   const compiledContractRef = useRef<HTMLInputElement>(null);
   const [contractClassFile, setContractClassFile] = useState<File | null>(null);
@@ -78,55 +79,62 @@ export default function EngineDeploy(_props: any) {
     return [42];
   }
 
-  const [deployDone, setDeployDone] = useState<boolean>(false);
+  const isClassRegistered = async (provider: any, classHash: string) => {
+    const { abi } = await provider.getClassAt(REGISTRY_CONTRACT_ADDRESS);
+    if (abi === undefined) {
+      console.log("No registry contract abi found.")
+    }
+    const contract = new Contract(json.parse(abi), REGISTRY_CONTRACT_ADDRESS, provider);
+    const get_class = await contract.get_class(classHash);
+    console.log({
+      get_class
+    })
+    return !((feltString(get_class?.name) === "0x0") && (feltString(get_class?.version) === "0x0"))
+  }
+
+  const isContractDeployed = async (provider: any, contractAddress: string) => {
+    try {
+      const result = await provider.getClassAt(contractAddress);
+      return result !== undefined;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  const [deployDone, setDeployDone] = useState<"registering" | "declaring" | "deploying" | "deployed" | undefined>(undefined);
   const [deployedContractClassHash, setDeployedContractClassHash] = useState<string | null>(null);
   const [deployedContractAddress, setDeployedContractAddress] = useState<string | null>(null);
   const [contractClassName, setContractClassName] = useState<string>("");
   const [contractClassVersion, _setContractClassVersion] = useState<string>("v0.0.0");
+  const { provider } = useProvider();
   const deploy = async () => {
     console.log("Declaring & Deploying contract...");
-    setDeployDone(false);
-    const callData = compileDeployCallData();
-    const classHash = await declareContract(account, contractClassData, compiledContractData);
-    console.log("Class Hash: ", classHash);
-    setDeployedContractClassHash(classHash);
-    // TODO: multicall
-    /*
-    await registerClassCall(account, classHash, contractClassName, contractClassVersion);
-    console.log("Registered class hash with registry");
-    await deployContractCall(account, classHash, callData);
-    console.log("Deployed contract with registry");
-    */
-    const multiTxHash = await registerDeployMultiCall(account, classHash, contractClassName, contractClassVersion, callData);
-    console.log("Registered deploy with registry", multiTxHash);
-    if (!account) return;
-    let res = null;
-    let attempts = 0;
-    while (!res && attempts < 5) {
-      // Try the above call till it returns a receipt ( it fails if the tx is not mined yet )
-      console.log("Waiting for receipt...");
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      try {
-        res = await account.getTransactionReceipt(multiTxHash) as any;
-      } catch (err) {
-        console.log("Error getting transaction receipt: ", err);
-      }
-      attempts++;
+    const testDeclarePayload = {
+      contract: contractClassData,
+      casm: compiledContractData,
+    };
+    const builtDeclarePayload = await account?.buildDeclarePayload(testDeclarePayload, { skipValidate: true });
+    testDeclarePayload.contract.abi = builtDeclarePayload.contract.abi;
+    const { classHash } = await declareContract(account, contractClassData, compiledContractData, setDeployDone);
+    const classRegistered = await isClassRegistered(provider, classHash);
+    console.log({
+      classRegistered,
+      classHash
+    })
+    if (!classRegistered) {
+      setDeployDone("registering");
+      await registerClassCall(account, classHash, contractClassName, contractClassVersion);
     }
-    console.log("Transaction receipt: ", res);
-    const deployedEvent = "0x206ba27d5bbda42a63e108ee1ac7a6455c197ee34cd40a268e61b06f78dbc9a";
-    if (!res || !res.events) {
-      console.log("No receipt found");
-      return;
+    const calldata = compileDeployCallData()
+    const contractAddress = hash.calculateContractAddressFromHash("0", classHash, calldata, REGISTRY_CONTRACT_ADDRESS);
+    const deployed = await isContractDeployed(provider, contractAddress)
+    if (!deployed) {
+      setDeployDone("deploying");
+      await registerDeployMultiCall(account, classHash, contractClassName, contractClassVersion, calldata);
     }
-    const deployedEventData = res.events.find((event: any) => event.keys[0] === deployedEvent);
-    if (!deployedEventData) {
-      console.log("No deployed event found");
-      return;
-    }
-    const contractAddress = deployedEventData.keys[1];
     setDeployedContractAddress(contractAddress);
-    setDeployDone(true);
+    setDeployedContractClassHash(classHash);
+    setDeployDone("deployed");
   }
   // TODO: Register events before deploying the contract
   const registerEvents = async () => {
@@ -142,7 +150,7 @@ export default function EngineDeploy(_props: any) {
     console.log("Events to register: ", deployedContractAddress, eventsToRegister);
 
     // Register each event
-    await registerEventsCall(account, deployedContractAddress, eventsToRegister);
+    await registerContractAndEventsCall(account, deployedContractAddress, deployedContractClassHash || "", eventsToRegister);
   }
   useEffect(() => {
     registerEvents();
@@ -256,7 +264,22 @@ export default function EngineDeploy(_props: any) {
           )}
         </div>
       </div>
-      {deployDone && (
+      {
+        deployDone === "registering" && <div className="flex flex-row items-center gap-2">
+          <p className="text-[2rem]">Status: Registering Class...</p>
+        </div>
+      }
+      {
+        deployDone === "declaring" && <div className="flex flex-row items-center gap-2">
+          <p className="text-[2rem]">Status: Declaring...</p>
+        </div>
+      }
+      {
+        deployDone === "deploying" && <div className="flex flex-row items-center gap-2">
+          <p className="text-[2rem]">Status: Deploying...</p>
+        </div>
+      }
+      {deployDone === "deployed" && (
         <div className="flex flex-row items-center gap-2">
           <p className="text-[2rem]">Class Hash: {deployedContractClassHash}</p>
           <p className="text-[2rem]">Contract Address: {deployedContractAddress}</p>

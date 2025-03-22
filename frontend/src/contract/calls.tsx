@@ -54,45 +54,65 @@ export const declareDeployContract = async (account: any, contractData: any, com
   };
 }
 
-export const declareContract = async (account: any, contractData: any, compiledContractData: any):
-  Promise<string> => {
+export const declareContract = async (account: any, contractData: any, compiledContractData: any, setDeployDone: any):
+  Promise<{ classHash: string, contract: any, casm: any, compiledClassHash: any }> => {
   try {
     if (!account) {
       console.error("Account not connected");
-      return "";
+      return {
+        classHash: "",
+        contract: undefined,
+        casm: undefined,
+        compiledClassHash: undefined
+      };
     }
-    // setSubmitted(true);
-    // setTxHash("");
-    /*
-    let declarePayload: DeclareContractPayload = {
+
+    const testDeclarePayload: DeclareContractPayload = {
       contract: contractData,
       casm: compiledContractData,
     };
-    */
-    const declarePayload: DeclareContractPayload = {
-      contract: contractData,
-      casm: compiledContractData,
-    };
-    // TODO: Generic provider (passed as arg)  
-    // TODO: No STRK Fees
-    // TODO: contractClass differs from declared class
+
+    const builtDeclarePayload = await account.buildDeclarePayload(testDeclarePayload, {skipValidate: true});
+    testDeclarePayload.contract.abi = builtDeclarePayload.contract.abi;
+
+    const extractedData = extractContractHashes(testDeclarePayload);
     const innerProvider = provider(sepolia);
     if (!innerProvider) {
       console.error("Provider not found");
-      return "";
+      return {
+        classHash: "",
+        contract: undefined,
+        casm: undefined,
+        compiledClassHash: undefined
+      };
     }
-    // TODO: Check if contract is already declared
-    console.log("Declaring contract...", declarePayload);
-    const result = await account.declare(declarePayload);
-    console.log("Result:", result);
-    const classHash = result.class_hash;
-    return classHash;
-    // setTxHash(result.transaction_hash);
+    const isDeclared = await innerProvider.isClassDeclared(extractedData);
+
+    if (!isDeclared) {
+      console.log("Declaring contract...");
+      setDeployDone("declaring");
+      const result = await account.declare(testDeclarePayload);
+      console.log("Result:", result);
+      const classHash = result.class_hash;
+      return classHash;
+    } else {
+      console.log("Contract already declared:", extractedData.classHash);
+      return {
+        classHash: extractedData.classHash,
+        contract: extractedData.contract,
+        casm: extractedData.casm,
+        compiledClassHash: extractedData?.compiledClassHash
+      }
+    }
   } catch (error) {
     console.error(error);
-    return "";
+    return {
+      classHash: "",
+      contract: undefined,
+      casm: undefined,
+      compiledClassHash: undefined
+    };
   } finally {
     console.log("Done.");
-    // setSubmitted(false);
   };
 }

@@ -1,4 +1,4 @@
-const REGISTRY_CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ADDRESS || "0x079babba1534a9adb94857a4d29ef98e08526a9268efdb0640a7593f26a93b1d";
+import { REGISTRY_CONTRACT_ADDRESS } from "../../constants";
 
 const printCalldata = (calldata: any) => {
   let str = "";
@@ -8,7 +8,7 @@ const printCalldata = (calldata: any) => {
   console.log(str);
 }
 
-const feltString = (string: string): string => {
+export const feltString = (string: string): string => {
   if (!string) {
     return "0x0";
   }
@@ -129,6 +129,9 @@ export const registerDeployMultiCall = async (account: any, classHash: string, c
         calldata: innerCalldata2
       }
     ]);
+    console.log({
+      result
+    })
     txHash = result.transaction_hash;
     console.log("Tx hash: ", result.transaction_hash, result);
   } catch (e) {
@@ -215,7 +218,7 @@ export const registerEventCall = async (account: any, contractAddress: string, e
   }
 }
 
-export const registerEventsCall = async (account: any, contractAddress: string, eventSelectors: string[]):
+export const registerContractAndEventsCall = async (account: any, contractAddress: string, classHash: string, eventSelectors: string[]):
   Promise<any> => {
   try {
     if (!account) {
@@ -232,6 +235,11 @@ export const registerEventsCall = async (account: any, contractAddress: string, 
     });
     console.log("Registering events: ", account, executeData);
     const result = await account.execute([
+      {
+        contractAddress: REGISTRY_CONTRACT_ADDRESS,
+        entrypoint: "register_contract",
+        calldata: [contractAddress, classHash]
+      },
       ...executeData
     ]);
     console.log("Tx hash: ", result.transaction_hash);
