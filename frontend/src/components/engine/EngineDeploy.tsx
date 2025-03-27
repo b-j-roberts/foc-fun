@@ -1,7 +1,6 @@
 import Image from "next/image";
 import { useState, useRef, useEffect } from "react";
-import { useAccount } from "@starknet-react/core";
-import { hash } from "starknet";
+import { useAccount, useProvider } from "@starknet-react/core";
 
 import { ContractInput } from "./ContractInput";
 import { declareIfClass } from "../../contract/calls";
@@ -11,6 +10,8 @@ import { addContractClass } from "../../api/registry";
 import upload from "../../../public/icons/upload.png";
 import uploaded from "../../../public/icons/uploaded.png";
 import copy from "../../../public/icons/copy.png";
+import { cairo, CallData, hash, json } from "starknet";
+import { parseStarknetType } from "@/abi/parser";
 // import edit from "../../../public/icons/edit.png";
 
 // TODO: no compiled_contract_class.json?
@@ -35,6 +36,10 @@ export default function EngineDeploy() {
   const [compiledContractData, setCompiledContractData] = useState<any | null>(null);
   const [contractAbi, setContractAbi] = useState<any[]>([]);
   const [constructorInputs, setConstructorInputs] = useState<any[]>([]);
+
+  // TODO: Try with array of structs
+  const [inputItemsPlaceholders, setInputItemsPlaceholders] = useState<any>([]);
+
   const handleContractClassFileChange = (e: any) => {
     if (!e.target) return;
     const file = e.target.files[0];
@@ -74,11 +79,6 @@ export default function EngineDeploy() {
     e.preventDefault();
   }
 
-  const compileDeployCallData = (): any[] => {
-    // TODO: Compile the call data from input fields
-    return [42];
-  }
-
   const [deployedContractClassHash, setDeployedContractClassHash] = useState<string | null>(null);
   const [deployedContractAddress, setDeployedContractAddress] = useState<string | null>(null);
   const [shortDeployedContractClassHash, setShortDeployedContractClassHash] = useState<string | null>(null);
@@ -93,11 +93,133 @@ export default function EngineDeploy() {
   }, [deployedContractAddress]);
   const [contractClassName, setContractClassName] = useState<string>("");
   const [contractClassVersion, _setContractClassVersion] = useState<string>("v0.0.0");
+  
+  const validateInputTypes = (): { isValid: boolean, values: any[] } => {
+    const values: any[] = [];
+    const isValid = constructorInputs?.every((input, id) => {
+      const parsedType = parseStarknetType(input?.type, contractAbi)?.type;
+      const parsedKind = parseStarknetType(input?.type, contractAbi)?.kind;
+      if (parsedKind === 'array') {
+        const arrayValues: any[] = [];
+        const isArrayValid = inputItemsPlaceholders.every((_: any, pos: number) => {
+          const inputElement = document.getElementById(`${id}-${parsedType}-${pos}`) as HTMLInputElement;
+          const inputValue = inputElement?.value;
+          if (!inputValue) return false;
+
+          const isValid = validateInputValue(parsedType, inputValue);
+          if (isValid) {
+            arrayValues.push(inputValue);
+          }
+          return isValid;
+        });
+        if (isArrayValid) {
+          values.push(arrayValues);
+        }
+        return isArrayValid;
+      } else {
+        const inputElement = document.getElementById(`${id}-${parsedType}`) as HTMLInputElement;
+        const inputValue = inputElement?.value;
+        if (!inputValue) return false; // Ensure input is not empty
+
+        const isValid = validateInputValue(parsedType, inputValue);
+        if (isValid) {
+          values.push(inputValue);
+        }
+        return isValid;
+      }
+    }) ?? false;
+    return { isValid, values };
+  };
+  
+  const validateInputValue = (parsedType: string, inputValue: string): boolean => {
+    // Validate ByteArray string
+    if (parsedType === "string") {
+      if (typeof inputValue !== "string" || inputValue.length === 0) return false;
+      try {
+        const encoded = new TextEncoder().encode(inputValue);
+        const decoded = new TextDecoder().decode(encoded);
+        return decoded === inputValue;
+      } catch (error) {
+        return false;
+      }
+    }
+  
+    // Validate felt252
+    if (parsedType === "felt") {
+      if (isNaN(Number(inputValue))) return false;
+      try {
+        const num = BigInt(inputValue);
+        const P = (BigInt(2) ** BigInt(251)) + (BigInt(17) * (BigInt(2) ** BigInt(192))) + BigInt(1);
+        return num >= BigInt(0) && num < P;
+      } catch (error) {
+        return false;
+      }
+    }
+  
+    // Validate unsigned integer types (u8, u16, u32, u64, u128, u256)
+    const uintBitSizes: { [key: string]: number } = {
+      u8: 8,
+      u16: 16,
+      u32: 32,
+      u64: 64,
+      u128: 128,
+      u256: 256
+    };
+  
+    if (parsedType in uintBitSizes) {
+      if (isNaN(Number(inputValue))) return false;
+      try {
+        const num = BigInt(inputValue);
+        const maxValue = BigInt(2) ** BigInt(uintBitSizes[parsedType]);
+        return num >= BigInt(0) && num < maxValue;
+      } catch (error) {
+        return false;
+      }
+    }
+  
+    // Validate signed integer types (i8, i16, i32, i64, i128)
+    const intBitSizes: { [key: string]: number } = {
+      i8: 8,
+      i16: 16,
+      i32: 32,
+      i64: 64,
+      i128: 128
+    };
+  
+    if (parsedType in intBitSizes) {
+      if (isNaN(Number(inputValue))) return false;
+      try {
+        const num = BigInt(inputValue);
+        const minValue = -(BigInt(2) ** BigInt(intBitSizes[parsedType] - 1));
+        const maxValue = (BigInt(2) ** BigInt(intBitSizes[parsedType] - 1)) - BigInt(1);
+        return num >= minValue && num <= maxValue;
+      } catch (error) {
+        return false;
+      }
+    }
+  
+    // Validate booleans
+    if (parsedType === "bool") {
+      return inputValue === "true" || inputValue === "false";
+    }
+  
+    // Validate Contract address
+    if (parsedType === "address") {
+      const starknetAddressRegex = /^0x[0-9a-fA-F]{64}$/;
+      return starknetAddressRegex.test(inputValue);
+    }
+  
+    return true; // Default to true for unknown types
+  };
+
   const deploy = async () => {
     if (!account) return;
     console.log("Declaring & Deploying contract...");
 
-    const callData = compileDeployCallData();
+    if (!validateInputTypes()?.isValid) return;
+
+    const callData: any = validateInputTypes()?.values;
+    
     const result = await declareIfClass(account, contractClassData, compiledContractData);
     console.log("Class Hash: ", result);
     setDeployedContractClassHash(result.classHash);
@@ -145,7 +267,6 @@ export default function EngineDeploy() {
       console.log("No deployed event found");
       return;
     }
-    const contractAddress = deployedEventData.keys[1];
     setDeployedContractAddress(contractAddress);
   }
 
@@ -236,7 +357,13 @@ export default function EngineDeploy() {
                 <div className="flex flex-col gap-4 h-[40rem] overflow-y-scroll bg-[#000000a0] rounded-xl w-min py-[1rem] pr-[2rem]
                   border-[2px] border-[var(--foreground)]">
                   {constructorInputs.map((input: any, idx: number) => (
-                    <ContractInput key={idx} input={input} abi={contractAbi} />
+                    <ContractInput
+                      key={idx} id={idx} 
+                      input={input} 
+                      inputItemsPlaceholders={inputItemsPlaceholders} 
+                      setInputItemsPlaceholders={setInputItemsPlaceholders} 
+                      abi={contractAbi} 
+                    />
                   ))}
                 </div>
                 </div>

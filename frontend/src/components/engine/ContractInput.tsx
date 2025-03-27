@@ -8,7 +8,7 @@ export const ContractInputPrimitive = (props: any) => {
       <input
         className="Form__text text-[2rem] pl-[1rem] pt-[0.5rem]"
         type="text"
-        id={props.type.type}
+        id={`${props.id}-${props.type.type}`}
         placeholder={props.name}
       />
       <button
@@ -22,8 +22,6 @@ export const ContractInputPrimitive = (props: any) => {
 }
 
 export const ContractInputArray = (props: any) => {
-  // TODO: Try with array of structs
-  const [inputItemsPlaceholders, setInputItemsPlaceholders] = useState<any>([]);
   return (
     <div className="flex flex-col gap-[0.5rem] ml-[2rem]">
       <div className="flex flex-row items-center">
@@ -36,17 +34,20 @@ export const ContractInputArray = (props: any) => {
         </button>
         <button
           className="Button__empty px-[0.5rem] ml-[1rem] text-[3rem] h-[2.5rem]"
-          onClick={() => setInputItemsPlaceholders([...inputItemsPlaceholders, `${props.name} ${inputItemsPlaceholders.length}`])}
+          onClick={() => props.setInputItemsPlaceholders([
+            ...(props.inputItemsPlaceholders || []), 
+            `${props.name} ${props.inputItemsPlaceholders?.length || 0}`
+          ])}
         >
           +
         </button>
       </div>
-      {inputItemsPlaceholders.map((item: any, index: number) => (
+      {props.inputItemsPlaceholders?.map((item: any, index: number) => (
         <div key={index} className="flex flex-row items-center ml-[2rem]">
           <input
             className="Form__text text-[2rem] pl-[1rem] pt-[0.5rem]"
             type="text"
-            id={props.type.type}
+            id={`${props.id}-${props.type.type}-${index}`}
             placeholder={item}
           />
           <button
@@ -57,7 +58,10 @@ export const ContractInputArray = (props: any) => {
           </button>
           <button
             className="Button__empty px-[0.5rem] ml-[1rem] text-[3rem] h-[2.5rem]"
-            onClick={() => setInputItemsPlaceholders(inputItemsPlaceholders.slice(0, -1))}
+            onClick={() => {
+              const newPlaceholders = props.inputItemsPlaceholders.slice(0, -1);
+              props.setInputItemsPlaceholders(newPlaceholders);
+            }}
           >
             -
           </button>
@@ -82,13 +86,13 @@ export const ContractInputStruct = (props: any) => {
       {props.type.fields && props.type.fields.map((field: any, index: number) => (
         <div key={index}>
           {field.type.kind === "primitive" && (
-            <ContractInputPrimitive type={field.type} name={field.name} />
+            <ContractInputPrimitive id={`${props.id}-${props.type.type}-${index}`} type={field.type} name={field.name} />
           )}
           {field.type.kind === "array" && (
-            <ContractInputArray type={field.type} name={field.name} />
+            <ContractInputArray id={`${props.id}-${props.type.type}-${index}`} type={field.type} name={field.name} />
           )}
           {field.type.kind === "struct" && (
-            <ContractInputStruct type={field.type} name={field.name} />
+            <ContractInputStruct id={`${props.id}-${props.type.type}-${index}`} type={field.type} name={field.name} />
           )}
         </div>
       ))}
@@ -108,13 +112,13 @@ export const ContractInput = (props: any) => {
   return (
     <div className="flex flex-col m-0 p-0">
       {inputType && inputType.kind === "primitive" && (
-        <ContractInputPrimitive type={inputType} name={props.input.name} />
+        <ContractInputPrimitive id={props.id} type={inputType} name={props.input.name} />
       )}
       {inputType && inputType.kind === "array" && (
-        <ContractInputArray type={inputType} name={props.input.name} />
+        <ContractInputArray id={props.id} type={inputType} name={props.input.name} inputItemsPlaceholders={props.inputItemsPlaceholders} setInputItemsPlaceholders={props.setInputItemsPlaceholders}  />
       )}
       {inputType && inputType.kind === "struct" && (
-        <ContractInputStruct type={inputType} name={props.input.name} />
+        <ContractInputStruct id={props.id} type={inputType} name={props.input.name} />
       )}
     </div>
   );
